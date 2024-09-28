@@ -32,9 +32,10 @@ def infer(args):
     tag_list = np.array(tag_list)
 
     # Inference
-    tag = sess.run(None, {sess.get_inputs()[0].name: image})[0][0]
-    tokens = tag_list[tag == 1]
-    print(tag)
+    tags, scores = sess.run(None, {sess.get_inputs()[0].name: image})
+    print(tags[0])
+    print(scores[0])
+    tokens = tag_list[tags[0] == 1]
     print("Image Tags: ", tokens.tolist())
 
 

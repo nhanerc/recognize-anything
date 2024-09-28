@@ -1,5 +1,6 @@
 import sys
 import argparse
+import typing as T
 from pathlib import Path
 
 import torch
@@ -15,7 +16,7 @@ class Wrapper(torch.nn.Module):
         super().__init__()
         self.model = model
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
+    def forward(self, image: torch.Tensor) -> T.Tuple[torch.Tensor, torch.Tensor]:
         label_embed = torch.nn.functional.relu(self.model.wordvec_proj(self.model.label_embed))
 
         image_embeds = self.model.image_proj(self.model.visual_encoder(image))
@@ -35,14 +36,12 @@ class Wrapper(torch.nn.Module):
         )
 
         logits = self.model.fc(tagging_embed[0]).squeeze(-1)
+        proba = torch.sigmoid(logits)
+        threshold = self.model.class_threshold.to(image.device)
 
-        targets = torch.where(
-            torch.sigmoid(logits) > self.model.class_threshold.to(image.device),
-            torch.tensor(1.0).to(image.device),
-            torch.zeros(self.model.num_class).to(image.device),
-        )
-
-        return targets
+        targets = proba > threshold
+        scores = proba / threshold
+        return targets, scores
 
 
 class WrapperPlus(torch.nn.Module):
@@ -50,7 +49,7 @@ class WrapperPlus(torch.nn.Module):
         super().__init__()
         self.model = model
 
-    def forward(self, image: torch.Tensor) -> torch.Tensor:
+    def forward(self, image: torch.Tensor) -> T.Tuple[torch.Tensor, torch.Tensor]:
         image_embeds = self.model.image_proj(self.model.visual_encoder(image))
         image_atts = torch.ones(image_embeds.size()[:-1], dtype=torch.long).to(image.device)
 
@@ -87,14 +86,12 @@ class WrapperPlus(torch.nn.Module):
         )
 
         logits = self.model.fc(tagging_embed[0]).squeeze(-1)
+        proba = torch.sigmoid(logits)
+        threshold = self.model.class_threshold.to(image.device)
 
-        targets = torch.where(
-            torch.sigmoid(logits) > self.model.class_threshold.to(image.device),
-            torch.tensor(1.0).to(image.device),
-            torch.zeros(self.model.num_class).to(image.device),
-        )
-
-        return targets
+        targets = proba > threshold
+        scores = proba / threshold
+        return targets, scores
 
 
 def export(args):
@@ -102,6 +99,7 @@ def export(args):
 
     # Load model
     assert args.type in ["ram", "ram_plus"]
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
     if args.type == "ram":
         file_path = args.output_dir + "/ram.onnx"
         model = Wrapper(ram(pretrained=args.pretrained, image_size=384, vit="swin_l"))
@@ -120,7 +118,7 @@ def export(args):
         image,
         file_path,
         input_names=["image"],
-        output_names=["tag"],
+        output_names=["tags", "scores"],
         opset_version=16,
     )
 
